@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.interpolate import RectBivariateSpline
 
-array_size = 102
-seed_chance = .0005
-flip_chance = .2
-n_passes = 7
+
+array_size = 256
+seed_chance = .00005
+flip_chance = .25
+n_passes = 8
 
 array = np.full((array_size, array_size), False)
 
@@ -52,3 +54,4 @@ for n in range(n_passes):
 plt.imshow(array, cmap='gray', vmin=0, vmax=1)
 plt.axis('off')  # Remove axes if you want just the image
 plt.show()
+

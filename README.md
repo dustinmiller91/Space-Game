@@ -1,74 +1,126 @@
-# Space Strategy Game - Proof of Concept
+# Star Strategy
 
-## Setup Instructions
+A browser-based multiplayer idle space strategy game.
 
-### 1. Install PostgreSQL
-```bash
-sudo apt update
-sudo apt install postgresql postgresql-contrib
+## Project Structure
+
+```
+star_strategy/
+├── server/
+│   ├── schema.sql                # PostgreSQL table definitions
+│   ├── universe_generation.py    # Initialization script — generates galaxy & populates DB
+│   ├── server.py                 # FastAPI game server (REST + WebSocket + tick loop)
+│   └── requirements.txt          # Python dependencies
+│
+└── client/
+    ├── index.html                # Entry point — loads Phaser + all JS modules
+    └── js/
+        ├── config.js             # Shared constants & color palette
+        ├── assets.js             # Procedural asset generation (placeholder circles)
+        ├── network.js            # Client/server communication (REST + WebSocket)
+        ├── ui.js                 # Reusable UI elements (tooltips, panels, edge-scroll)
+        ├── engine.js             # Phaser boot & game initialization
+        └── scenes/
+            ├── GalaxyScene.js    # Top-level galaxy map (100 star systems)
+            ├── SystemScene.js    # Solar system view (star + planets)
+            └── DetailsScene.js   # Planet inspection panel
 ```
 
-### 2. Create Database
-```bash
-# Start PostgreSQL service
-sudo service postgresql start
+### Module Responsibilities
 
-# Create database and user
+| Module         | Purpose                                                              |
+|----------------|----------------------------------------------------------------------|
+| `config.js`    | Constants, colors, fonts — single source of truth for shared values  |
+| `assets.js`    | Drawing functions for stars, planets, starfields (will become procedural pixel-art) |
+| `network.js`   | REST `fetch()` calls + WebSocket connection, event system            |
+| `ui.js`        | Tooltips, HUD labels, back buttons, info panels, edge-scroll camera  |
+| `engine.js`    | Phaser config, scene registration, boot sequence                     |
+| `GalaxyScene`  | Fetches galaxy from `/api/galaxy`, renders star map                  |
+| `SystemScene`  | Fetches system from `/api/system/:id`, renders orbits + planets      |
+| `DetailsScene` | Fetches planet from `/api/planet/:id`, renders detail panel          |
+
+## Setup
+
+### 1. PostgreSQL
+
+```bash
+sudo service postgresql start
 sudo -u postgres psql -c "CREATE DATABASE spacegame;"
 sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'postgres';"
 ```
 
-### 3. Load Schema
+### 2. Python Environment
+
 ```bash
-sudo -u postgres psql -d spacegame -f schema.sql
+cd server
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### 4. Install Python Dependencies
+### 3. Initialize the Universe
+
+This creates all tables and populates 100 star systems with stars and planets:
+
 ```bash
-pip install -r requirements.txt --break-system-packages
+python universe_generation.py
 ```
 
-### 5. Run the Server
-```bash
-python server.py
+You should see output like:
+```
+═══════════════════════════════════════
+  Star Strategy — Universe Generation
+═══════════════════════════════════════
+Galaxy seed: 42
+Generating 100 systems...
+  → ~110 stars
+  → ~500 planets
+[✓] Schema created
+[✓] Inserted 100 systems, 110 stars, 502 planets
+[✓] Universe initialized successfully!
 ```
 
-### 6. Open Browser
-Navigate to: http://localhost:8000
+### 4. Start the Game Server
 
-## What You'll See
+```bash
+uvicorn server:app --host 0.0.0.0 --port 8000 --reload
+```
 
-- A green circle representing the test planet
-- Resource counter at the top showing: Minerals, Biomass, Gas, Energy
-- Resources increment every 3 seconds based on planet population and production rates
+### 5. Play
 
-## Current Test Data
+Open http://localhost:8000
 
-- **Planet**: Terra Prime
-- **Population**: 1000
-- **Production Rates**:
-  - Minerals: 5.0 per population
-  - Biomass: 3.0 per population
-  - Gas: 2.0 per population
-  - Energy: 4.0 per population
-
-Every tick (3 seconds), resources increase by:
-- Minerals: +5000
-- Biomass: +3000
-- Gas: +2000
-- Energy: +4000
+- **Galaxy view**: Pan with mouse at screen edges, hover stars for tooltips, click to enter a system
+- **System view**: See the star and orbiting planets, click a planet for details
+- **Details view**: Planet attributes, resource rates, and system stockpile (accumulates every 3s tick)
 
 ## Architecture
 
-- **Database**: PostgreSQL stores game state
-- **Backend**: FastAPI server runs game tick loop every 3 seconds
-- **Frontend**: Phaser 3 renders planet and UI, WebSocket receives updates
-- **Communication**: WebSocket for real-time resource updates
+```
+Browser (Phaser 3)                    Server (FastAPI)
+┌────────────────────┐                ┌────────────────────────┐
+│  GalaxyScene       │──GET /api/──→  │  REST endpoints        │
+│  SystemScene       │    galaxy      │    /api/galaxy          │
+│  DetailsScene      │    system/:id  │    /api/system/:id      │
+│                    │    planet/:id  │    /api/planet/:id      │
+│  Network.ws ◄──────┼──WebSocket──→  │  WebSocket handler      │
+│                    │                │                          │
+│  Assets (render)   │                │  Tick loop (3s)          │
+│  UI (tooltips etc) │                │    └→ UPDATE resources   │
+└────────────────────┘                │                          │
+                                      │  PostgreSQL              │
+                                      │    players, systems,     │
+                                      │    stars, planets,       │
+                                      │    system_resources      │
+                                      └────────────────────────┘
+```
 
-## Next Steps
+## Re-initializing
 
-Once this is working, we can add:
-- Multiple planets
-- Player actions (build, upgrade)
-- Procedurally generated planet visuals
-- More complex game mechanics
+To reset the universe (drops all tables and regenerates):
+
+```bash
+python universe_generation.py
+```
+
+Change `GALAXY_SEED` in `universe_generation.py` for a different galaxy.
