@@ -8,6 +8,11 @@
  *   Body sizes use logarithmic scaling so gas giants are visibly larger
  *   than moons but don't dominate the screen. The actual data values
  *   are unchanged — this is purely a rendering transform.
+ *
+ * DYNAMIC WORLD BOUNDS:
+ *   After data loads, we walk the mobile tree to find the max distance
+ *   from center (summing semi_major along each root→leaf path).
+ *   The world is sized to fit this with padding.
  */
 
 const ORBIT_SCALE = 2.5;  // multiplier on semi_major for display
@@ -23,6 +28,7 @@ class SystemScene extends Phaser.Scene {
 
   create() {
     this.cameras.main.setBackgroundColor('#000000');
+    // Initial world size — will be updated after data loads
     this._worldW = CONFIG.SYSTEM_W;
     this._worldH = CONFIG.SYSTEM_H;
     this.cx = CONFIG.SYSTEM_W / 2;
@@ -59,21 +65,50 @@ class SystemScene extends Phaser.Scene {
   }
 
   /**
+   * Compute the max distance any body can be from the root star,
+   * by walking the mobile tree and summing orbital radii along each path.
+   * Uses apoapsis (semi_major * (1 + ecc)) for worst-case extent.
+   */
+  _computeMaxExtent(bodies) {
+    // Build parent→children map
+    const children = {};
+    let rootId = null;
+    for (const b of bodies) {
+      if (b.parent_id === null) {
+        rootId = b.id;
+      } else {
+        (children[b.parent_id] = children[b.parent_id] || []).push(b);
+      }
+    }
+
+    // DFS: accumulate distance from root
+    let maxDist = 0;
+    const stack = [{ id: rootId, dist: 0 }];
+    while (stack.length > 0) {
+      const { id, dist } = stack.pop();
+      maxDist = Math.max(maxDist, dist);
+      for (const child of (children[id] || [])) {
+        const apoapsis = (child.semi_major || 0) * (1 + (child.eccentricity || 0));
+        stack.push({ id: child.id, dist: dist + apoapsis * ORBIT_SCALE });
+      }
+    }
+
+    return maxDist;
+  }
+
+  /**
    * Logarithmic display radius for bodies.
-   * Maps the data radius (1-60+) to a visible screen size.
-   *   stars:   20-30px
-   *   planets: 5-20px
+   *   stars:   12-30px
+   *   planets: 4-20px
    *   moons:   2-6px
    */
   _displayRadius(body) {
     const r = body.radius || 1;
     if (body.body_type === 'star') {
-      // Stars: compact objects get small display, giants get large
       return 12 + Math.log2(Math.max(r, 0.01) + 1) * 5;
     } else if (body.body_type === 'moon') {
       return 2 + Math.log2(r + 1) * 1.5;
     } else {
-      // Planets: log scale from ~5 to ~20
       return 4 + Math.log2(r + 1) * 3;
     }
   }
@@ -81,9 +116,19 @@ class SystemScene extends Phaser.Scene {
   _renderSystem(data) {
     const { system, bodies } = data;
     const W = (o) => UI.tagAsWorld(this, o);
-    const cx = this.cx, cy = this.cy;
-    const bodyPos = {};
 
+    // ── Dynamic world bounds from tree extent ──────────────
+    const maxExtent = this._computeMaxExtent(bodies);
+    const padding = 500;
+    const needed = (maxExtent + padding) * 2;
+    const worldSize = Math.max(needed, 4000); // minimum 4000
+    this._worldW = worldSize;
+    this._worldH = worldSize;
+    this.cx = worldSize / 2;
+    this.cy = worldSize / 2;
+    const cx = this.cx, cy = this.cy;
+
+    const bodyPos = {};
     const root = bodies.find(b => b.body_type === 'star' && b.parent_id === null);
 
     UI.addHUD(this, `[ SYSTEM VIEW ]  #${system.id}  "${system.name}"`, null);
@@ -125,6 +170,11 @@ class SystemScene extends Phaser.Scene {
         W(ring);
         this._drawMoon(b, pos.x, pos.y, dr, W);
       }
+    }
+
+    // Re-center camera now that we know the true world size
+    if (!this._centerOnWorld) {
+      UI.centerCameraOn(this, cx, cy);
     }
   }
 
