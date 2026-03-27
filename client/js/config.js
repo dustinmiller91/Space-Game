@@ -13,18 +13,21 @@ const CONFIG = {
   GALAXY_W: 12000,
   GALAXY_H: 12000,
 
-  // System view world (scales to fit the largest systems)
-  SYSTEM_W: 10000,
-  SYSTEM_H: 10000,
+  // System view world — must accommodate compound orbits:
+  // companion at ~1500 AU + planet at ~900 AU = 2400 from center
+  // × ORBIT_SCALE 2.5 = 6000 from center → need 12000+ total
+  SYSTEM_W: 16000,
+  SYSTEM_H: 16000,
 
   // Camera
   EDGE_ZONE: 80,       // pixels from screen edge that trigger panning
   SCROLL_SPEED: 18,    // base pan speed (scaled by 1/zoom)
-  ZOOM_MIN: 0.15,
+  ZOOM_MIN: 0.08,
   ZOOM_MAX: 2.5,
   ZOOM_STEP: 0.08,     // zoom delta per scroll tick
   PAN_LERP: 0.15,      // pan acceleration smoothing (0 = instant, 1 = frozen)
-  ZOOM_LERP: 0.12,     // zoom animation smoothing
+  ZOOM_LERP: 0.08,     // zoom animation smoothing (lower = smoother)
+  ZOOM_PULL: 0.04,     // total camera adjustment per frame during zoom (pointer + center)
 
   // Typography
   FONT: '"Share Tech Mono", monospace',
