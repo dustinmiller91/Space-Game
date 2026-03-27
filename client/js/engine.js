@@ -26,4 +26,4 @@ const game = new Phaser.Game(gameConfig);
 // Connect WebSocket (for future real-time updates)
 Network.connect(1);
 
-console.log('[engine] Star Strategy started');
+console.log('[engine] Hollow Firmament started');

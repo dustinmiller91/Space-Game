@@ -1,20 +1,35 @@
 /**
- * config.js — Shared constants and configuration.
+ * config.js — Shared constants.
+ *
+ * Single source of truth for world dimensions, camera behavior,
+ * and the color palette. All magic numbers live here.
  */
 const CONFIG = {
-  WORLD_W: 4000,
-  WORLD_H: 4000,
-  EDGE_ZONE: 80,
-  SCROLL_SPEED: 8,
-  GALAXY_OFFSET: 500,
-  GALAXY_EXTENT: 3000,
+  // World (default — scenes can override with scene._worldW/_worldH)
+  WORLD_W: 8000,
+  WORLD_H: 8000,
 
-  ZOOM_MIN: 0.3,
+  // Galaxy view world (larger to spread systems apart)
+  GALAXY_W: 12000,
+  GALAXY_H: 12000,
+
+  // System view world (scales to fit the largest systems)
+  SYSTEM_W: 10000,
+  SYSTEM_H: 10000,
+
+  // Camera
+  EDGE_ZONE: 80,       // pixels from screen edge that trigger panning
+  SCROLL_SPEED: 18,    // base pan speed (scaled by 1/zoom)
+  ZOOM_MIN: 0.15,
   ZOOM_MAX: 2.5,
-  ZOOM_STEP: 0.08,
+  ZOOM_STEP: 0.08,     // zoom delta per scroll tick
+  PAN_LERP: 0.15,      // pan acceleration smoothing (0 = instant, 1 = frozen)
+  ZOOM_LERP: 0.12,     // zoom animation smoothing
 
+  // Typography
   FONT: '"Share Tech Mono", monospace',
 
+  // Color palette
   COLORS: {
     hud_title:    '#5a7a9a',
     hud_hint:     '#3a5060',

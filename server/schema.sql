@@ -1,22 +1,33 @@
 -- ============================================================
--- Star Strategy — Database Schema
+-- Hollow Firmament — Database Schema
 -- ============================================================
+--
+-- MOBILE DIAGRAM: Every object in a system is a "body" in a tree.
+--
+--   System root
+--     └─ Primary Star (parent_id = NULL)
+--          ├─ Secondary Star (orbits primary)
+--          │    └─ Planet (orbits secondary)
+--          │         └─ Moon (orbits planet)
+--          ├─ Planet (orbits primary)
+--          │    ├─ Moon
+--          │    └─ Moon
+--          └─ Planet
+--
+-- body_type: 'star', 'planet', 'moon'
+-- Orbital params are NULL for root bodies (they don't orbit anything).
 
--- Drop existing tables (for re-initialization)
 DROP TABLE IF EXISTS system_resources CASCADE;
-DROP TABLE IF EXISTS planets CASCADE;
-DROP TABLE IF EXISTS stars CASCADE;
+DROP TABLE IF EXISTS bodies CASCADE;
 DROP TABLE IF EXISTS systems CASCADE;
 DROP TABLE IF EXISTS players CASCADE;
 
--- Players
 CREATE TABLE players (
     id          SERIAL PRIMARY KEY,
     username    VARCHAR(50) UNIQUE NOT NULL,
     created_at  TIMESTAMP DEFAULT NOW()
 );
 
--- Systems (a grouping that holds stars + planets)
 CREATE TABLE systems (
     id          SERIAL PRIMARY KEY,
     name        VARCHAR(100) NOT NULL,
@@ -25,41 +36,40 @@ CREATE TABLE systems (
     seed        INTEGER NOT NULL
 );
 
--- Stars (each system has 1+ stars)
-CREATE TABLE stars (
+CREATE TABLE bodies (
     id              SERIAL PRIMARY KEY,
     system_id       INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+    parent_id       INTEGER REFERENCES bodies(id) ON DELETE CASCADE,
+    body_type       VARCHAR(10) NOT NULL CHECK (body_type IN ('star', 'planet', 'moon')),
     name            VARCHAR(100) NOT NULL,
-    spectral_class  VARCHAR(10) NOT NULL,
-    mass            DOUBLE PRECISION NOT NULL,
-    luminosity      DOUBLE PRECISION NOT NULL,
-    temperature     INTEGER NOT NULL,
+
+    -- Orbit (NULL for root body)
+    semi_major      DOUBLE PRECISION,
+    eccentricity    DOUBLE PRECISION DEFAULT 0,
+    orbit_angle     DOUBLE PRECISION DEFAULT 0,
+
+    -- Physical
+    mass            DOUBLE PRECISION NOT NULL DEFAULT 0,
     radius          DOUBLE PRECISION NOT NULL,
     color_hex       VARCHAR(7) NOT NULL,
-    seed            INTEGER NOT NULL
-);
+    seed            INTEGER NOT NULL,
 
--- Planets
-CREATE TABLE planets (
-    id              SERIAL PRIMARY KEY,
-    system_id       INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
-    parent_star_id  INTEGER NOT NULL REFERENCES stars(id) ON DELETE CASCADE,
-    name            VARCHAR(100) NOT NULL,
-    planet_type     VARCHAR(30) NOT NULL,
-    orbit_radius    DOUBLE PRECISION NOT NULL,
-    orbit_angle     DOUBLE PRECISION NOT NULL,
-    eccentricity    DOUBLE PRECISION NOT NULL DEFAULT 0,
-    planet_radius   DOUBLE PRECISION NOT NULL,
+    -- Star-specific
+    spectral_class  VARCHAR(10),
+    luminosity      DOUBLE PRECISION,
+    temperature     INTEGER,
+
+    -- Planet/moon-specific
+    planet_type     VARCHAR(30),
+
+    -- Economy
     population      INTEGER NOT NULL DEFAULT 0,
     minerals_rate   DOUBLE PRECISION NOT NULL DEFAULT 0,
     biomass_rate    DOUBLE PRECISION NOT NULL DEFAULT 0,
     gas_rate        DOUBLE PRECISION NOT NULL DEFAULT 0,
-    energy_rate     DOUBLE PRECISION NOT NULL DEFAULT 0,
-    color_hex       VARCHAR(7) NOT NULL,
-    seed            INTEGER NOT NULL
+    energy_rate     DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 
--- System-level accumulated resources
 CREATE TABLE system_resources (
     system_id               INTEGER PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
     controlled_by_player_id INTEGER REFERENCES players(id),
@@ -69,8 +79,7 @@ CREATE TABLE system_resources (
     energy                  DOUBLE PRECISION NOT NULL DEFAULT 0
 );
 
--- Indexes
-CREATE INDEX idx_stars_system      ON stars(system_id);
-CREATE INDEX idx_planets_system    ON planets(system_id);
-CREATE INDEX idx_planets_star      ON planets(parent_star_id);
-CREATE INDEX idx_sysres_player     ON system_resources(controlled_by_player_id);
+CREATE INDEX idx_bodies_system ON bodies(system_id);
+CREATE INDEX idx_bodies_parent ON bodies(parent_id);
+CREATE INDEX idx_bodies_type   ON bodies(body_type);
+CREATE INDEX idx_sysres_player ON system_resources(controlled_by_player_id);

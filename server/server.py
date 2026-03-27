@@ -1,8 +1,8 @@
 """
-server.py — FastAPI game server.
+server.py — Hollow Firmament game server.
 
-Serves the client files, runs the game tick loop,
-and pushes state updates to connected clients via WebSocket.
+Serves client files, runs the game tick loop, and provides
+REST + WebSocket APIs. All data comes from the unified 'bodies' table.
 """
 
 import asyncio
@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 # ── Configuration ───────────────────────────────────────────
+
 DB_CONFIG = {
     "database": "spacegame",
     "user": "postgres",
@@ -23,22 +24,20 @@ DB_CONFIG = {
     "host": "localhost",
     "port": 5432,
 }
-TICK_INTERVAL = 3  # seconds
-
+TICK_INTERVAL = 3
 
 # ── Connection Manager ──────────────────────────────────────
-class ConnectionManager:
-    """Manages active WebSocket connections."""
 
+class ConnectionManager:
     def __init__(self):
         self.active: dict[int, WebSocket] = {}
 
-    async def connect(self, user_id: int, ws: WebSocket):
+    async def connect(self, uid: int, ws: WebSocket):
         await ws.accept()
-        self.active[user_id] = ws
+        self.active[uid] = ws
 
-    def disconnect(self, user_id: int):
-        self.active.pop(user_id, None)
+    def disconnect(self, uid: int):
+        self.active.pop(uid, None)
 
     async def broadcast(self, data: dict):
         dead = []
@@ -50,24 +49,12 @@ class ConnectionManager:
         for uid in dead:
             self.active.pop(uid, None)
 
-    async def send_to(self, user_id: int, data: dict):
-        ws = self.active.get(user_id)
-        if ws:
-            try:
-                await ws.send_json(data)
-            except Exception:
-                self.active.pop(user_id, None)
-
-
 manager = ConnectionManager()
 
-
 # ── Game Tick ───────────────────────────────────────────────
+
 async def game_tick(pool: asyncpg.Pool):
-    """
-    One game tick: for each system, increment resources
-    by SUM(population * rate) across all planets.
-    """
+    """Increment system resources by sum(population * rate) across all bodies."""
     async with pool.acquire() as conn:
         await conn.execute("""
             UPDATE system_resources sr SET
@@ -76,21 +63,19 @@ async def game_tick(pool: asyncpg.Pool):
                 gas      = sr.gas      + sub.g,
                 energy   = sr.energy   + sub.e
             FROM (
-                SELECT
-                    system_id,
+                SELECT system_id,
                     SUM(population * minerals_rate) AS m,
                     SUM(population * biomass_rate)  AS b,
                     SUM(population * gas_rate)      AS g,
                     SUM(population * energy_rate)   AS e
-                FROM planets
+                FROM bodies
+                WHERE population > 0
                 GROUP BY system_id
             ) sub
             WHERE sr.system_id = sub.system_id
         """)
 
-
 async def tick_loop(pool: asyncpg.Pool):
-    """Background loop that runs game_tick every TICK_INTERVAL seconds."""
     while True:
         await asyncio.sleep(TICK_INTERVAL)
         try:
@@ -98,97 +83,80 @@ async def tick_loop(pool: asyncpg.Pool):
         except Exception as e:
             print(f"[tick error] {e}")
 
-
 # ── API Data Helpers ────────────────────────────────────────
-async def get_galaxy_data(pool: asyncpg.Pool) -> list[dict]:
-    """Return all systems with their primary star info for galaxy view."""
+
+async def get_galaxy_data(pool: asyncpg.Pool):
+    """Return all systems with primary star info + star count for galaxy view."""
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT DISTINCT ON (sys.id)
-                sys.id, sys.name, sys.galaxy_x, sys.galaxy_y, sys.seed,
-                s.id AS star_id, s.spectral_class, s.mass AS star_mass,
-                s.luminosity, s.temperature, s.radius AS star_radius,
-                s.color_hex, s.seed AS star_seed
+            SELECT sys.id, sys.name, sys.galaxy_x, sys.galaxy_y, sys.seed,
+                   b.id AS star_id, b.spectral_class, b.mass AS star_mass,
+                   b.luminosity, b.temperature, b.radius AS star_radius,
+                   b.color_hex, b.seed AS star_seed,
+                   (SELECT COUNT(*) FROM bodies b2
+                    WHERE b2.system_id = sys.id AND b2.body_type = 'star') AS star_count,
+                   (SELECT json_agg(json_build_object(
+                        'color_hex', b3.color_hex,
+                        'spectral_class', b3.spectral_class,
+                        'mass', b3.mass
+                    )) FROM bodies b3
+                    WHERE b3.system_id = sys.id AND b3.body_type = 'star'
+                    AND b3.id != b.id) AS companions
             FROM systems sys
-            JOIN stars s ON s.system_id = sys.id
-            ORDER BY sys.id, s.id
+            JOIN bodies b ON b.system_id = sys.id
+                         AND b.body_type = 'star'
+                         AND b.parent_id IS NULL
+            ORDER BY sys.id
         """)
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        # Parse JSON companions (asyncpg returns as string)
+        import json as _json
+        if d["companions"] and isinstance(d["companions"], str):
+            d["companions"] = _json.loads(d["companions"])
+        result.append(d)
+    return result
 
 
-async def get_system_data(pool: asyncpg.Pool, system_id: int) -> dict:
-    """Return full system info: stars + planets + resources."""
+async def get_system_data(pool: asyncpg.Pool, system_id: int):
+    """Return system info + all bodies as a flat list (client builds the tree)."""
     async with pool.acquire() as conn:
-        stars = await conn.fetch(
-            "SELECT * FROM stars WHERE system_id = $1 ORDER BY id", system_id
-        )
-        planets = await conn.fetch(
-            "SELECT * FROM planets WHERE system_id = $1 ORDER BY orbit_radius",
-            system_id,
-        )
+        system = await conn.fetchrow("SELECT * FROM systems WHERE id = $1", system_id)
+        bodies = await conn.fetch(
+            "SELECT * FROM bodies WHERE system_id = $1 ORDER BY semi_major NULLS FIRST",
+            system_id)
         resources = await conn.fetchrow(
-            "SELECT * FROM system_resources WHERE system_id = $1", system_id
-        )
-        system = await conn.fetchrow(
-            "SELECT * FROM systems WHERE id = $1", system_id
-        )
+            "SELECT * FROM system_resources WHERE system_id = $1", system_id)
     return {
         "system": dict(system) if system else None,
-        "stars": [dict(s) for s in stars],
-        "planets": [dict(p) for p in planets],
+        "bodies": [dict(b) for b in bodies],
         "resources": dict(resources) if resources else None,
     }
 
 
-async def get_planet_data(pool: asyncpg.Pool, planet_id: int) -> dict:
-    """Return planet details + parent star + system resources."""
+async def get_body_data(pool: asyncpg.Pool, body_id: int):
+    """Return a single body + its parent + system resources."""
     async with pool.acquire() as conn:
-        planet = await conn.fetchrow(
-            "SELECT * FROM planets WHERE id = $1", planet_id
-        )
-        if not planet:
+        body = await conn.fetchrow("SELECT * FROM bodies WHERE id = $1", body_id)
+        if not body:
             return {}
-        star = await conn.fetchrow(
-            "SELECT * FROM stars WHERE id = $1", planet["parent_star_id"]
-        )
+        parent = None
+        if body["parent_id"]:
+            parent = await conn.fetchrow("SELECT * FROM bodies WHERE id = $1", body["parent_id"])
+        children = await conn.fetch(
+            "SELECT * FROM bodies WHERE parent_id = $1 ORDER BY semi_major", body_id)
         resources = await conn.fetchrow(
-            "SELECT * FROM system_resources WHERE system_id = $1",
-            planet["system_id"],
-        )
+            "SELECT * FROM system_resources WHERE system_id = $1", body["system_id"])
     return {
-        "planet": dict(planet),
-        "star": dict(star) if star else None,
+        "body": dict(body),
+        "parent": dict(parent) if parent else None,
+        "children": [dict(c) for c in children],
         "resources": dict(resources) if resources else None,
     }
 
+# ── App Lifecycle ───────────────────────────────────────────
 
-async def get_star_data(pool: asyncpg.Pool, star_id: int) -> dict:
-    """Return star details + parent system + system resources."""
-    async with pool.acquire() as conn:
-        star = await conn.fetchrow(
-            "SELECT * FROM stars WHERE id = $1", star_id
-        )
-        if not star:
-            return {}
-        system = await conn.fetchrow(
-            "SELECT * FROM systems WHERE id = $1", star["system_id"]
-        )
-        resources = await conn.fetchrow(
-            "SELECT * FROM system_resources WHERE system_id = $1",
-            star["system_id"],
-        )
-        planet_count = await conn.fetchval(
-            "SELECT COUNT(*) FROM planets WHERE parent_star_id = $1", star_id
-        )
-    return {
-        "star": dict(star),
-        "system": dict(system) if system else None,
-        "resources": dict(resources) if resources else None,
-        "planet_count": planet_count,
-    }
-
-
-# ── App lifecycle ───────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     pool = await asyncpg.create_pool(**DB_CONFIG)
@@ -199,88 +167,55 @@ async def lifespan(app: FastAPI):
     task.cancel()
     await pool.close()
 
-
 app = FastAPI(lifespan=lifespan)
 
+# ── REST Endpoints ──────────────────────────────────────────
 
-# ── REST endpoints ──────────────────────────────────────────
 @app.get("/api/galaxy")
 async def api_galaxy():
-    data = await get_galaxy_data(app.state.pool)
-    return data
-
+    return await get_galaxy_data(app.state.pool)
 
 @app.get("/api/system/{system_id}")
 async def api_system(system_id: int):
-    data = await get_system_data(app.state.pool, system_id)
-    return data
+    return await get_system_data(app.state.pool, system_id)
 
-
-@app.get("/api/planet/{planet_id}")
-async def api_planet(planet_id: int):
-    data = await get_planet_data(app.state.pool, planet_id)
-    return data
-
-
-@app.get("/api/star/{star_id}")
-async def api_star(star_id: int):
-    data = await get_star_data(app.state.pool, star_id)
-    return data
-
+@app.get("/api/body/{body_id}")
+async def api_body(body_id: int):
+    return await get_body_data(app.state.pool, body_id)
 
 # ── WebSocket ───────────────────────────────────────────────
+
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(ws: WebSocket, user_id: int):
     await manager.connect(user_id, ws)
     try:
-        # Send initial galaxy state
         galaxy = await get_galaxy_data(app.state.pool)
         await ws.send_json({"type": "init", "galaxy": galaxy})
-
         while True:
             raw = await ws.receive_text()
             msg = json.loads(raw)
-            msg_type = msg.get("type")
-
-            if msg_type == "get_system":
+            t = msg.get("type")
+            if t == "get_system":
                 data = await get_system_data(app.state.pool, msg["system_id"])
                 await ws.send_json({"type": "system_data", **data})
-
-            elif msg_type == "get_planet":
-                data = await get_planet_data(app.state.pool, msg["planet_id"])
-                await ws.send_json({"type": "planet_data", **data})
-
-            elif msg_type == "get_resources":
-                async with app.state.pool.acquire() as conn:
-                    res = await conn.fetchrow(
-                        "SELECT * FROM system_resources WHERE system_id = $1",
-                        msg["system_id"],
-                    )
-                await ws.send_json({
-                    "type": "resource_update",
-                    "resources": dict(res) if res else {},
-                })
-
+            elif t == "get_body":
+                data = await get_body_data(app.state.pool, msg["body_id"])
+                await ws.send_json({"type": "body_data", **data})
     except WebSocketDisconnect:
         manager.disconnect(user_id)
     except Exception as e:
         print(f"[ws error] {e}")
         manager.disconnect(user_id)
 
+# ── Static Files ────────────────────────────────────────────
 
-# ── Static file serving ─────────────────────────────────────
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENT_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "client"))
-CLIENT_JS_DIR = os.path.join(CLIENT_DIR, "js")
-
-print(f"[static] Serving client from: {CLIENT_DIR}")
-print(f"[static] JS directory: {CLIENT_JS_DIR}")
-
+CLIENT_JS = os.path.join(CLIENT_DIR, "js")
+print(f"[static] Client: {CLIENT_DIR}")
 
 @app.get("/")
 async def serve_index():
     return FileResponse(os.path.join(CLIENT_DIR, "index.html"))
 
-
-# Mount with follow_symlink support — serves subdirectories (scenes/) automatically
-app.mount("/js", StaticFiles(directory=CLIENT_JS_DIR, follow_symlink=True), name="js")
+app.mount("/js", StaticFiles(directory=CLIENT_JS, follow_symlink=True), name="js")
