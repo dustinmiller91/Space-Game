@@ -9,13 +9,14 @@
  *   than moons but don't dominate the screen. The actual data values
  *   are unchanged — this is purely a rendering transform.
  *
- * DYNAMIC WORLD BOUNDS:
- *   After data loads, we walk the mobile tree to find the max distance
- *   from center (summing semi_major along each root→leaf path).
- *   The world is sized to fit this with padding.
+ *   Star radii are in solar radii (R☉): 0.00001–15
+ *   Planet radii are in display units: 5–32
+ *   Moon radii are in display units: 1–6
+ *   These are on different scales, so _displayRadius normalizes
+ *   each body type into an appropriate pixel range.
  */
 
-const ORBIT_SCALE = 2.5;  // multiplier on semi_major for display
+const ORBIT_SCALE = 5.0;  // multiplier on semi_major for display
 
 class SystemScene extends Phaser.Scene {
   constructor() { super('SystemScene'); }
@@ -28,14 +29,17 @@ class SystemScene extends Phaser.Scene {
 
   create() {
     this.cameras.main.setBackgroundColor('#000000');
-    // Initial world size — will be updated after data loads
-    this._worldW = CONFIG.SYSTEM_W;
-    this._worldH = CONFIG.SYSTEM_H;
-    this.cx = CONFIG.SYSTEM_W / 2;
-    this.cy = CONFIG.SYSTEM_H / 2;
+    // Temporary world size — updated dynamically in _renderSystem once data loads
+    this._worldW = 8000;
+    this._worldH = 8000;
+    this.cx = 4000;
+    this.cy = 4000;
 
     UI.initCameras(this);
-    UI.tagAsWorld(this, Assets.drawStarfield(this, 400, CONFIG.SYSTEM_W, CONFIG.SYSTEM_H));
+    const starfieldLayers = Assets.drawStarfield(this, this._worldW, this._worldH);
+    for (const layer of starfieldLayers) {
+      UI.tagAsWorld(this, layer);
+    }
     this.tooltip = UI.createTooltip(this);
 
     this.loadingText = this.add.text(
@@ -48,9 +52,11 @@ class SystemScene extends Phaser.Scene {
 
     UI.addBackButton(this, 16, 40, 'Back to Galaxy', () =>
       this.scene.start('GalaxyScene', { centerOn: this.galaxyPos }));
-    UI.setupEdgeScroll(this);
-    UI.setupZoom(this);
-    UI.centerCameraOn(this, this._centerOnWorld?.x ?? this.cx, this._centerOnWorld?.y ?? this.cy);
+    UI.setupCamera(this, {
+      zoom: CONFIG.ZOOM_MIN,
+      centerX: this._centerOnWorld?.x ?? this.cx,
+      centerY: this._centerOnWorld?.y ?? this.cy,
+    });
   }
 
   async _loadSystem() {
@@ -65,50 +71,34 @@ class SystemScene extends Phaser.Scene {
   }
 
   /**
-   * Compute the max distance any body can be from the root star,
-   * by walking the mobile tree and summing orbital radii along each path.
-   * Uses apoapsis (semi_major * (1 + ecc)) for worst-case extent.
-   */
-  _computeMaxExtent(bodies) {
-    // Build parent→children map
-    const children = {};
-    let rootId = null;
-    for (const b of bodies) {
-      if (b.parent_id === null) {
-        rootId = b.id;
-      } else {
-        (children[b.parent_id] = children[b.parent_id] || []).push(b);
-      }
-    }
-
-    // DFS: accumulate distance from root
-    let maxDist = 0;
-    const stack = [{ id: rootId, dist: 0 }];
-    while (stack.length > 0) {
-      const { id, dist } = stack.pop();
-      maxDist = Math.max(maxDist, dist);
-      for (const child of (children[id] || [])) {
-        const apoapsis = (child.semi_major || 0) * (1 + (child.eccentricity || 0));
-        stack.push({ id: child.id, dist: dist + apoapsis * ORBIT_SCALE });
-      }
-    }
-
-    return maxDist;
-  }
-
-  /**
    * Logarithmic display radius for bodies.
-   *   stars:   12-30px
-   *   planets: 4-20px
-   *   moons:   2-6px
+   *
+   * Star radii are in R☉ (solar radii): range ~0.00001–15
+   * Planet/moon radii are in display units: planets 5–32, moons 1–6
+   *
+   * Target pixel ranges:
+   *   stars:   30-60px  (always the dominant objects)
+   *   planets:  5-20px
+   *   moons:    2-6px
    */
   _displayRadius(body) {
     const r = body.radius || 1;
+
     if (body.body_type === 'star') {
-      return 12 + Math.log2(Math.max(r, 0.01) + 1) * 5;
+      // Star radii in R☉. Most main-sequence: 0.1–15.
+      // Exotics (neutron stars, white dwarfs): 0.00001–0.02
+      // Map to 50–100px. Stars should dominate the system view,
+      // especially with wider orbit spacing.
+      const clamped = Math.max(r, 0.01);
+      // log10 range: log10(0.01)=-2, log10(15)=1.18 → span ~3.2
+      const t = (Math.log10(clamped) + 2) / 3.2; // 0..1 normalized
+      return 50 + Math.max(0, Math.min(1, t)) * 50;
+
     } else if (body.body_type === 'moon') {
       return 2 + Math.log2(r + 1) * 1.5;
+
     } else {
+      // Planets: log scale from ~5 to ~20
       return 4 + Math.log2(r + 1) * 3;
     }
   }
@@ -117,31 +107,54 @@ class SystemScene extends Phaser.Scene {
     const { system, bodies } = data;
     const W = (o) => UI.tagAsWorld(this, o);
 
-    // ── Dynamic world bounds from tree extent ──────────────
-    const maxExtent = this._computeMaxExtent(bodies);
-    const padding = 500;
-    const needed = (maxExtent + padding) * 2;
-    const worldSize = Math.max(needed, 4000); // minimum 4000
+    const root = bodies.find(b => b.body_type === 'star' && b.parent_id === null);
+    const ordered = this._topoSort(bodies, root?.id);
+
+    // ── Compute world size from tree structure ─────────────
+    // Walk the body tree accumulating max apoapsis distance from root.
+    // Only needs parent distances, not actual positions.
+    const maxDist = {};
+    if (root) maxDist[root.id] = 0;
+
+    let maxExtent = 0;
+    for (const b of ordered) {
+      if (b.id === root?.id) continue;
+      const parentDist = maxDist[b.parent_id] || 0;
+      const ecc = b.eccentricity || 0;
+      const apoapsis = (b.semi_major || 0) * (1 + ecc) * ORBIT_SCALE;
+      maxDist[b.id] = parentDist + apoapsis;
+      if (b.body_type !== 'moon') {
+        maxExtent = Math.max(maxExtent, maxDist[b.id]);
+      }
+    }
+
+    // Pad so outermost orbits aren't on the edge
+    const worldSize = Math.max(4000, Math.ceil(maxExtent * 2.6));
     this._worldW = worldSize;
     this._worldH = worldSize;
-    this.cx = worldSize / 2;
-    this.cy = worldSize / 2;
-    const cx = this.cx, cy = this.cy;
+    const cx = worldSize / 2;
+    const cy = worldSize / 2;
+    this.cx = cx;
+    this.cy = cy;
 
+    // Resize starfield layers to match actual world size
+    if (this._starfieldSprites) {
+      for (const layer of this._starfieldSprites) {
+        layer.sprite.setPosition(cx, cy);
+        layer.sprite.setSize(worldSize, worldSize);
+      }
+    }
+
+    // ── Compute positions and draw ─────────────────────────
     const bodyPos = {};
-    const root = bodies.find(b => b.body_type === 'star' && b.parent_id === null);
+    if (root) bodyPos[root.id] = { x: cx, y: cy };
 
     UI.addHUD(this, `[ SYSTEM VIEW ]  #${system.id}  "${system.name}"`, null);
     UI.addHintText(this, 66, 'Click any body to inspect  •  Edge-scroll to pan  •  Scroll-wheel to zoom');
 
-    // ── Root star at center ────────────────────────────────
     if (root) {
-      bodyPos[root.id] = { x: cx, y: cy };
       this._drawStar(root, cx, cy, this._displayRadius(root), W);
     }
-
-    // ── All other bodies, parents before children ──────────
-    const ordered = this._topoSort(bodies, root?.id);
 
     for (const b of ordered) {
       if (b.id === root?.id) continue;
@@ -162,20 +175,28 @@ class SystemScene extends Phaser.Scene {
 
       } else if (b.body_type === 'moon') {
         const ring = this.add.graphics();
-        ring.lineStyle(0.5, CONFIG.COLORS.orbit_ring, 0.2);
         const semiMinor = displayOrbit * Math.sqrt(1 - ecc * ecc);
         const fo = displayOrbit * ecc;
-        ring.strokeEllipseShape(
-          new Phaser.Geom.Ellipse(parentPos.x + fo, parentPos.y, displayOrbit * 2, semiMinor * 2), 48);
+        const ellipse = new Phaser.Geom.Ellipse(parentPos.x + fo, parentPos.y, displayOrbit * 2, semiMinor * 2);
+        ring.lineStyle(2, 0x1a3a5a, 0.03);
+        ring.strokeEllipseShape(ellipse, 48);
+        ring.lineStyle(0.7, 0x2a4a6a, 0.28);
+        ring.strokeEllipseShape(ellipse, 48);
         W(ring);
         this._drawMoon(b, pos.x, pos.y, dr, W);
       }
     }
 
-    // Re-center camera now that we know the true world size
-    if (!this._centerOnWorld) {
-      UI.centerCameraOn(this, cx, cy);
-    }
+    // Set dynamic zoom floor so the full system is always viewable
+    const cam = this.cameras.main;
+    const minZoomW = cam.width / worldSize;
+    const minZoomH = cam.height / worldSize;
+    this._zoomMin = Math.min(minZoomW, minZoomH) * 0.9;
+
+    // Set zoom target — spring will animate there smoothly
+    if (this._cam) this._cam.targetZoom = this._zoomMin * 1.5;
+
+    UI.centerCameraOn(this, this._centerOnWorld?.x ?? cx, this._centerOnWorld?.y ?? cy);
   }
 
   _topoSort(bodies, rootId) {
@@ -245,5 +266,5 @@ class SystemScene extends Phaser.Scene {
     });
   }
 
-  update() { UI.updateEdgeScroll(this); UI.updateZoom(this); }
+  update() { UI.updateCamera(this); Assets.updateStarfield(this); }
 }

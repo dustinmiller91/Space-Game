@@ -12,7 +12,8 @@ const gameConfig = {
   width: window.innerWidth,
   height: window.innerHeight,
   backgroundColor: '#000000',
-  scene: [GalaxyScene, SystemScene, DetailsScene],
+  scene: [BootScene, GalaxyScene, SystemScene, DetailsScene],
+  // scene: [CameraTestScene],
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,

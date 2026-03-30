@@ -27,7 +27,7 @@ from psycopg2.extras import execute_values
 # ── Configuration ───────────────────────────────────────────
 
 GALAXY_SEED = 42
-NUM_SYSTEMS = 100
+NUM_SYSTEMS = 120
 GALAXY_EXTENT = 10000.0
 GALAXY_OFFSET = 1000.0
 
