@@ -13,21 +13,38 @@ const CONFIG = {
   GALAXY_W: 12000,
   GALAXY_H: 12000,
 
-  // System view world — must accommodate compound orbits:
-  // companion at ~1500 AU + planet at ~900 AU = 2400 from center
-  // × ORBIT_SCALE 2.5 = 6000 from center → need 12000+ total
-  SYSTEM_W: 16000,
-  SYSTEM_H: 16000,
+  // Galaxy view object scaling
+  GALAXY_STAR_SCALE: 1.5,   // multiplier on star body radius in galaxy view
+  GALAXY_ZONE_SCALE: 2.0,   // multiplier on interaction zone size in galaxy view
+  GALAXY_GLOW: { normal: 12, hover: 16 },  // glow outer radius as multiple of star radius
+ 
+  // System view glow
+  SYSTEM_STAR_GLOW: { normal: 12, hover: 15 },  // glow outer radius as multiple of star radius
 
+ 
   // Camera
-  EDGE_ZONE: 80,       // pixels from screen edge that trigger panning
-  SCROLL_SPEED: 18,    // base pan speed (scaled by 1/zoom)
-  ZOOM_MIN: 0.08,
+  EDGE_ZONE: 80,          // pixels from screen edge that trigger panning
+  SCROLL_SPEED: 18,       // base pan speed (scaled by 1/zoom)
+  ZOOM_MIN: 0.15,         // global minimum zoom (scenes can override via _zoomMin)
   ZOOM_MAX: 2.5,
-  ZOOM_STEP: 0.08,     // zoom delta per scroll tick
-  PAN_LERP: 0.15,      // pan acceleration smoothing (0 = instant, 1 = frozen)
-  ZOOM_LERP: 0.08,     // zoom animation smoothing (lower = smoother)
-  ZOOM_PULL: 0.04,     // total camera adjustment per frame during zoom (pointer + center)
+  ZOOM_STEP: 0.12,        // proportional zoom per scroll tick (0.12 = 12%)
+  CAM_SPRING_OMEGA: 6.0,  // spring frequency — higher = snappier, lower = more sweeping
+
+
+  // Starfield background layers (preloaded PNGs)
+  //   key:          texture key (matches PNG filename without extension)
+  //   scroll:       scrollFactor for parallax (1.0 = locked to world, lower = lags behind)
+  //   vis_min:      zoom level below which the layer is invisible
+  //   full_vis_min: zoom level where the layer becomes fully visible
+  //   full_vis_max: zoom level where the layer starts to fade out
+  //   vis_max:      zoom level above which the layer is invisible
+  //
+  // Zoom range: 0.15 (fully out) to 2.5 (fully in)
+  STARFIELD_LAYERS: [
+    { key: 'starfield_near', scroll: .85,   vis_min: .1, full_vis_min: .35,   full_vis_max: 999, vis_max: 999 },
+    { key: 'starfield_mid',  scroll: 0.725, vis_min: .35, full_vis_min:  1,  full_vis_max: 999, vis_max: 999 },
+    { key: 'starfield_far',  scroll: 0.6,   vis_min: .5, full_vis_min: 1.5, full_vis_max: 999, vis_max: 999 },
+  ],
 
   // Typography
   FONT: '"Share Tech Mono", monospace',

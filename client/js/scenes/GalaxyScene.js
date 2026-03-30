@@ -18,16 +18,27 @@ class GalaxyScene extends Phaser.Scene {
     this._worldH = CONFIG.GALAXY_H;
 
     UI.initCameras(this);
-    UI.tagAsWorld(this, Assets.drawStarfield(this, 600, CONFIG.GALAXY_W, CONFIG.GALAXY_H));
+    for (const layer of Assets.drawStarfield(this, CONFIG.GALAXY_W, CONFIG.GALAXY_H)) {
+      UI.tagAsWorld(this, layer);
+    }
 
     this.tooltip = UI.createTooltip(this);
     this._loadGalaxy();
 
     UI.addHUD(this, '[ GALAXY VIEW ]',
       'Edge-scroll to pan  •  Scroll-wheel to zoom  •  Click a star to enter system');
-    UI.setupEdgeScroll(this);
-    UI.setupZoom(this);
-    UI.centerCameraOn(this, this._centerOn?.x ?? CONFIG.GALAXY_W / 2, this._centerOn?.y ?? CONFIG.GALAXY_H / 2);
+    UI.setupCamera(this, {
+      centerX: this._centerOn?.x ?? CONFIG.GALAXY_W / 2,
+      centerY: this._centerOn?.y ?? CONFIG.GALAXY_H / 2,
+    });
+
+    // DEBUG: diagnostic overlay
+    this._diagText = this.add.text(16, 80, '', {
+      fontFamily: CONFIG.FONT, fontSize: '12px', color: '#ffffff',
+      backgroundColor: 'rgba(0,0,0,0.8)',
+      padding: { x: 8, y: 6 },
+    }).setScrollFactor(0).setDepth(1000);
+    UI.tagAsUI(this, this._diagText);
   }
 
   async _loadGalaxy() {
@@ -40,7 +51,8 @@ class GalaxyScene extends Phaser.Scene {
 
     for (const sys of systems) {
       const starCount = sys.star_count || 1;
-      const primaryR = 2 + Math.min(parseFloat(sys.star_mass) || 1, 10) * 0.4;
+      const baseR = 2 + Math.min(parseFloat(sys.star_mass) || 1, 10) * 0.4;
+      const primaryR = baseR * CONFIG.GALAXY_STAR_SCALE;
       const cx = sys.galaxy_x, cy = sys.galaxy_y;
 
       // ── Draw stars as a cluster ──────────────────────────
@@ -88,20 +100,18 @@ class GalaxyScene extends Phaser.Scene {
       const tooltip = `${sys.name}  •  ${multName} [${sys.spectral_class}]`;
 
       // ── Interaction zone covers the whole cluster ────────
-      const clusterSize = Math.max(primaryR * 8, primaryR * 3 + companions.length * 6);
+      const clusterSize = Math.max(primaryR * 8, primaryR * 3 + companions.length * 6) * CONFIG.GALAXY_ZONE_SCALE;
 
       const zone = UI.addInteractiveZone(this, cx, cy, clusterSize, this.tooltip, tooltip, {
         onOver: () => {
           for (const g of allGlows) {
-            Assets.setGalaxyStarGlow(this, g, g.img.x, g.img.y,
-              g.img.displayWidth / 12, true);
+            Assets.setGalaxyStarGlow(this, g, g.img.x, g.img.y, g.r, true);
             W(g.img);
           }
         },
         onOut: () => {
           for (const g of allGlows) {
-            Assets.setGalaxyStarGlow(this, g, g.img.x, g.img.y,
-              g.img.displayWidth / 12, false);
+            Assets.setGalaxyStarGlow(this, g, g.img.x, g.img.y, g.r, false);
             W(g.img);
           }
         },
@@ -113,5 +123,24 @@ class GalaxyScene extends Phaser.Scene {
     }
   }
 
-  update() { UI.updateEdgeScroll(this); UI.updateZoom(this); }
+  update() {
+    UI.updateCamera(this);
+    Assets.updateStarfield(this);
+
+    if (this._diagText) {
+      const cam = this.cameras.main;
+      const tl = cam.getWorldPoint(0, 0);
+      const br = cam.getWorldPoint(cam.width, cam.height);
+      this._diagText.setText([
+        `scroll: (${cam.scrollX.toFixed(0)}, ${cam.scrollY.toFixed(0)})`,
+        `zoom: ${cam.zoom.toFixed(4)}`,
+        `viewport: ${(cam.width/cam.zoom).toFixed(0)} x ${(cam.height/cam.zoom).toFixed(0)}`,
+        `world: ${this._worldW} x ${this._worldH}`,
+        `topLeft: (${tl.x.toFixed(0)}, ${tl.y.toFixed(0)})`,
+        `botRight: (${br.x.toFixed(0)}, ${br.y.toFixed(0)})`,
+      ].join('\n'));
+    }
+  }
+
+  
 }

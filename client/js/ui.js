@@ -138,52 +138,44 @@ const UI = {
     if (scene._uiCam) scene.cameras.main.ignore(obj);
   },
 
-  // ── Edge Scroll (smooth gradient panning) ────────────────
+  // ── Camera System ─────────────────────────────────────────
+  //
+  // Spring-driven chase camera. All smoothness comes from critically
+  // damped springs — inputs only modify the target state, never the
+  // camera directly.
+  //
+  // State:  targetZoom, targetScrollX, targetScrollY
+  // Each frame: advance three springs toward targets, done.
+  //
+  // Public API:
+  //   setupCamera(scene, opts)  — call in create(), after initCameras
+  //   updateCamera(scene)       — call in update()
+  //   centerCameraOn(scene, wx, wy) — set scroll target to world point
 
-  setupEdgeScroll(scene) {
-    scene._panTarget = { x: 0, y: 0 };
-    scene._panVel    = { x: 0, y: 0 };
-
-    scene.input.on('pointermove', (ptr) => {
-      const cam = scene.cameras.main;
-      let dx = 0, dy = 0;
-
-      if (ptr.x < CONFIG.EDGE_ZONE)                    dx = -(1 - ptr.x / CONFIG.EDGE_ZONE);
-      else if (ptr.x > cam.width - CONFIG.EDGE_ZONE)   dx = (ptr.x - (cam.width - CONFIG.EDGE_ZONE)) / CONFIG.EDGE_ZONE;
-
-      if (ptr.y < CONFIG.EDGE_ZONE)                    dy = -(1 - ptr.y / CONFIG.EDGE_ZONE);
-      else if (ptr.y > cam.height - CONFIG.EDGE_ZONE)  dy = (ptr.y - (cam.height - CONFIG.EDGE_ZONE)) / CONFIG.EDGE_ZONE;
-
-      scene._panTarget.x = Phaser.Math.Clamp(dx, -1, 1);
-      scene._panTarget.y = Phaser.Math.Clamp(dy, -1, 1);
-    });
-  },
-
-  updateEdgeScroll(scene) {
-    const cam = scene.cameras.main;
-    const v = scene._panVel;
-    const t = scene._panTarget;
-
-    v.x = Phaser.Math.Linear(v.x, t.x, CONFIG.PAN_LERP);
-    v.y = Phaser.Math.Linear(v.y, t.y, CONFIG.PAN_LERP);
-    if (Math.abs(v.x) < 0.001) v.x = 0;
-    if (Math.abs(v.y) < 0.001) v.y = 0;
-
-    const speed = CONFIG.SCROLL_SPEED / cam.zoom;
-    cam.scrollX += v.x * speed;
-    cam.scrollY += v.y * speed;
-
-    // Clamp to world bounds (smooth centering when viewport exceeds world)
-    this._clampCamera(scene);
+  /**
+   * Critically damped spring. Approaches target without oscillation.
+   * Returns { value, velocity }.
+   */
+  _springDamp(current, target, velocity, omega, dt) {
+    const diff = current - target;
+    const exp = Math.exp(-omega * dt);
+    const newVal = target + (diff + (velocity + omega * diff) * dt) * exp;
+    const newVel = (velocity - omega * (velocity + omega * diff) * dt) * exp;
+    return { value: newVal, velocity: newVel };
   },
 
   /**
-   * Compute the clamped scroll position for one axis.
-   * Returns the target scroll value — does NOT modify the camera.
+   * Clamp a scroll value so the viewport stays within world bounds.
+   * When viewport exceeds world, centers on that axis.
+   *
+   * Phaser's scrollX/Y with default 0.5 origin means the visible
+   * left edge of the viewport is at: scrollX + camSize/2 - camSize/(2*zoom)
+   * i.e. scrollX = leftEdge - camSize/2 + camSize/(2*zoom)
    */
-  _clampedScroll(scroll, camSize, zoom, worldSize) {
+  _clampScroll(scroll, camSize, zoom, worldSize) {
     const vw = camSize / zoom;
     if (vw >= worldSize) {
+      // Viewport exceeds world — center
       return worldSize / 2 - camSize / 2;
     }
     const min = vw / 2 - camSize / 2;
@@ -191,148 +183,150 @@ const UI = {
     return Phaser.Math.Clamp(scroll, min, Math.max(min, max));
   },
 
-  /** Hard-clamp camera to world bounds (for edge-scroll). */
-  _clampCamera(scene) {
+  /**
+   * Initialize the camera system. Call once in create(), after initCameras().
+   * opts: { zoom, centerX, centerY }
+   */
+  setupCamera(scene, opts = {}) {
     const cam = scene.cameras.main;
-    const worldW = scene._worldW || CONFIG.WORLD_W;
-    const worldH = scene._worldH || CONFIG.WORLD_H;
-    cam.scrollX = this._clampedScroll(cam.scrollX, cam.width, cam.zoom, worldW);
-    cam.scrollY = this._clampedScroll(cam.scrollY, cam.height, cam.zoom, worldH);
-  },
+    const startZoom = opts.zoom || 1;
 
-  // ── Smooth Zoom (pointer-centered with center bias) ─────
-  //
-  // Three features work together for smooth zoom-out:
-  //
-  // 1. GRADUATED ZOOM STEP: Zoom delta decreases as you zoom out,
-  //    so the last few clicks to see the full scene are gentle.
-  //
-  // 2. CENTER BIAS: Below 50% of zoom range, the camera gradually
-  //    blends toward the world center. At minimum zoom it's fully
-  //    centered. This prevents jarring edge-bouncing.
-  //
-  // 3. CLAMPED ANCHOR: The pointer-centered anchor position is
-  //    clamped to valid bounds before applying, so it never
-  //    overshoots the world edge.
-  //
-  // Phaser's getWorldPoint does:
-  //   worldX = scrollX + (screenX - width/2) / zoom + width/2
-  // Inverse:
-  //   scrollX = worldX - (screenX - width/2) / zoom - width/2
+    // Target state — inputs modify these, springs chase them
+    scene._cam = {
+      targetZoom: startZoom,
+      targetScrollX: 0,
+      targetScrollY: 0,
+      // Spring velocities
+      velZoom: 0,
+      velScrollX: 0,
+      velScrollY: 0,
+      // Edge pan intensity (-1 to 1 per axis)
+      edgePanX: 0,
+      edgePanY: 0,
+    };
 
-  setupZoom(scene) {
-    scene._zoomTarget = scene.cameras.main.zoom;
-    scene._zoomFocusActive = false;
+    cam.setZoom(startZoom);
 
+    // Set initial scroll position
+    if (opts.centerX !== undefined && opts.centerY !== undefined) {
+      const worldW = scene._worldW || CONFIG.WORLD_W;
+      const worldH = scene._worldH || CONFIG.WORLD_H;
+      const sx = opts.centerX - cam.width * 0.5;
+      const sy = opts.centerY - cam.height * 0.5;
+      scene._cam.targetScrollX = this._clampScroll(sx, cam.width, startZoom, worldW);
+      scene._cam.targetScrollY = this._clampScroll(sy, cam.height, startZoom, worldH);
+      cam.scrollX = scene._cam.targetScrollX;
+      cam.scrollY = scene._cam.targetScrollY;
+    }
+
+    // ── Edge pan: track pointer proximity to screen edges ──
+    scene.input.on('pointermove', (ptr) => {
+      const c = scene._cam;
+      const w = cam.width, h = cam.height;
+      const ez = CONFIG.EDGE_ZONE;
+
+      c.edgePanX = 0;
+      c.edgePanY = 0;
+
+      if (ptr.x < ez)          c.edgePanX = -(1 - ptr.x / ez);
+      else if (ptr.x > w - ez) c.edgePanX = (ptr.x - (w - ez)) / ez;
+
+      if (ptr.y < ez)          c.edgePanY = -(1 - ptr.y / ez);
+      else if (ptr.y > h - ez) c.edgePanY = (ptr.y - (h - ez)) / ez;
+    });
+
+    // ── Zoom: proportional step, recompute scroll target ──
     scene.input.on('wheel', (ptr, go, dx, dy) => {
-      const cam = scene.cameras.main;
-      const prev = scene._zoomTarget;
+      const c = scene._cam;
+      const zoomMin = scene._zoomMin || CONFIG.ZOOM_MIN;
+      const prevZoom = c.targetZoom;
 
-      // Graduated step: full speed at max zoom, tapers as you zoom out
-      const zoomRange = CONFIG.ZOOM_MAX - CONFIG.ZOOM_MIN;
-      const zoomFraction = (prev - CONFIG.ZOOM_MIN) / zoomRange;
-      const step = CONFIG.ZOOM_STEP * (0.3 + 0.7 * zoomFraction);
-
-      scene._zoomTarget = Phaser.Math.Clamp(
-        prev + (dy > 0 ? -1 : 1) * step,
-        CONFIG.ZOOM_MIN, CONFIG.ZOOM_MAX
+      c.targetZoom = Phaser.Math.Clamp(
+        prevZoom * (dy > 0 ? (1 - CONFIG.ZOOM_STEP) : (1 + CONFIG.ZOOM_STEP)),
+        zoomMin, CONFIG.ZOOM_MAX
       );
 
-      if (scene._zoomTarget !== prev) {
-        // Get the world point under the pointer RIGHT NOW
+      if (c.targetZoom !== prevZoom) {
+        const worldW = scene._worldW || CONFIG.WORLD_W;
+        const worldH = scene._worldH || CONFIG.WORLD_H;
+        const hw = cam.width * 0.5, hh = cam.height * 0.5;
+
+        // World point under pointer at current camera state
         const wp = cam.getWorldPoint(ptr.x, ptr.y);
 
-        if (!scene._zoomFocusActive) {
-          // First tick: capture both the anchor and pointer target
-          scene._zoomFocus = { sx: ptr.x, sy: ptr.y, wx: wp.x, wy: wp.y };
-          scene._zoomPointerTarget = { wx: wp.x, wy: wp.y };
-        } else {
-          // Subsequent tick while mid-animation: blend the pointer target
-          // halfway between old target and new mouse position (smooth transition)
-          const pt = scene._zoomPointerTarget;
-          pt.wx = (pt.wx + wp.x) * 0.5;
-          pt.wy = (pt.wy + wp.y) * 0.5;
-        }
-        scene._zoomFocusActive = true;
+        // Scroll position that keeps this world point under the pointer
+        // at the TARGET zoom level
+        const rawX = wp.x - (ptr.x - hw) / c.targetZoom - hw;
+        const rawY = wp.y - (ptr.y - hh) / c.targetZoom - hh;
+
+        // Clamp to world bounds at the target zoom
+        c.targetScrollX = this._clampScroll(rawX, cam.width, c.targetZoom, worldW);
+        c.targetScrollY = this._clampScroll(rawY, cam.height, c.targetZoom, worldH);
       }
     });
   },
 
-  updateZoom(scene) {
-    if (scene._zoomTarget === undefined) return;
+  /**
+   * Advance the camera. Call every frame in update().
+   */
+  updateCamera(scene) {
+    if (!scene._cam) return;
     const cam = scene.cameras.main;
+    const c = scene._cam;
     const worldW = scene._worldW || CONFIG.WORLD_W;
     const worldH = scene._worldH || CONFIG.WORLD_H;
-    const prevZoom = cam.zoom;
+    const omega = CONFIG.CAM_SPRING_OMEGA;
+    const dt = 1 / 60;
 
-    // Smoothly interpolate zoom level
-    cam.zoom = Phaser.Math.Linear(cam.zoom, scene._zoomTarget, CONFIG.ZOOM_LERP);
-
-    if (scene._zoomFocusActive) {
-      const f = scene._zoomFocus;
-      const hw = cam.width * 0.5, hh = cam.height * 0.5;
-
-      // Base position from the anchor formula (keeps original focus stable)
-      let posX = f.wx - (f.sx - hw) / cam.zoom - hw;
-      let posY = f.wy - (f.sy - hh) / cam.zoom - hh;
-
-      // Fixed pull budget, split between pointer-pull and center-pull
-      const pull = CONFIG.ZOOM_PULL;
-
-      // Pointer target: scroll that would center the pointer's world point
-      const pt = scene._zoomPointerTarget;
-      const pointerTargetX = pt.wx - hw;
-      const pointerTargetY = pt.wy - hh;
-
-      // Center target: scroll that would center the world
-      const centerTargetX = worldW / 2 - hw;
-      const centerTargetY = worldH / 2 - hh;
-
-      // Center weight: 0 above midpoint, ramps to 1 at min zoom.
-      // Only when zooming out.
-      const isZoomingOut = cam.zoom < prevZoom;
-      const zoomRange = CONFIG.ZOOM_MAX - CONFIG.ZOOM_MIN;
-      const midpoint = CONFIG.ZOOM_MIN + zoomRange * 0.5;
-      let centerWeight = 0;
-      if (isZoomingOut && cam.zoom < midpoint) {
-        const t = 1 - (cam.zoom - CONFIG.ZOOM_MIN) / (midpoint - CONFIG.ZOOM_MIN);
-        centerWeight = t * t;
-      }
-
-      // Split the budget
-      const pointerPull = pull * (1 - centerWeight);
-      const centerPull  = pull * centerWeight;
-
-      // Apply both pulls to the anchor position
-      posX += (pointerTargetX - posX) * pointerPull;
-      posY += (pointerTargetY - posY) * pointerPull;
-      posX += (centerTargetX - posX) * centerPull;
-      posY += (centerTargetY - posY) * centerPull;
-
-      // Clamp to valid bounds
-      cam.scrollX = this._clampedScroll(posX, cam.width, cam.zoom, worldW);
-      cam.scrollY = this._clampedScroll(posY, cam.height, cam.zoom, worldH);
+    // ── Edge panning: add to scroll target each frame ──
+    if (c.edgePanX || c.edgePanY) {
+      const speed = CONFIG.SCROLL_SPEED / c.targetZoom;
+      c.targetScrollX += c.edgePanX * speed;
+      c.targetScrollY += c.edgePanY * speed;
     }
 
-    // Snap when close
-    if (Math.abs(cam.zoom - scene._zoomTarget) < 0.001) {
-      cam.zoom = scene._zoomTarget;
-      scene._zoomFocusActive = false;
-    }
+    // ── Clamp scroll target to world bounds at target zoom ──
+    c.targetScrollX = this._clampScroll(c.targetScrollX, cam.width, c.targetZoom, worldW);
+    c.targetScrollY = this._clampScroll(c.targetScrollY, cam.height, c.targetZoom, worldH);
 
+    // ── Advance springs ──
+    const z = this._springDamp(cam.zoom, c.targetZoom, c.velZoom, omega, dt);
+    const sx = this._springDamp(cam.scrollX, c.targetScrollX, c.velScrollX, omega, dt);
+    const sy = this._springDamp(cam.scrollY, c.targetScrollY, c.velScrollY, omega, dt);
+
+    cam.zoom = z.value;
+    cam.scrollX = sx.value;
+    cam.scrollY = sy.value;
+    c.velZoom = z.velocity;
+    c.velScrollX = sx.velocity;
+    c.velScrollY = sy.velocity;
+
+    // Keep UI camera sized to viewport
     if (scene._uiCam) scene._uiCam.setSize(cam.width, cam.height);
   },
 
-  // ── Camera Helpers ───────────────────────────────────────
-
   /**
-   * Center the camera on a world coordinate.
-   * From getWorldPoint: screenCenter maps to scrollX + width/2
-   * So: scrollX = worldX - width/2
+   * Set the camera target to center on a world coordinate.
+   * The spring will animate there smoothly.
    */
   centerCameraOn(scene, wx, wy) {
-    const cam = scene.cameras.main;
-    cam.scrollX = wx - cam.width * 0.5;
-    cam.scrollY = wy - cam.height * 0.5;
+    if (scene._cam) {
+      const cam = scene.cameras.main;
+      const worldW = scene._worldW || CONFIG.WORLD_W;
+      const worldH = scene._worldH || CONFIG.WORLD_H;
+      const zoom = scene._cam.targetZoom;
+      const rawX = wx - cam.width * 0.5;
+      const rawY = wy - cam.height * 0.5;
+      scene._cam.targetScrollX = this._clampScroll(rawX, cam.width, zoom, worldW);
+      scene._cam.targetScrollY = this._clampScroll(rawY, cam.height, zoom, worldH);
+      // Also set current position for instant centering on scene start
+      cam.scrollX = scene._cam.targetScrollX;
+      cam.scrollY = scene._cam.targetScrollY;
+    } else {
+      // Fallback for scenes without camera system (DetailsScene)
+      const cam = scene.cameras.main;
+      cam.scrollX = wx - cam.width * 0.5;
+      cam.scrollY = wy - cam.height * 0.5;
+    }
   },
 };

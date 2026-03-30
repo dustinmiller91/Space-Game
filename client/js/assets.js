@@ -83,7 +83,8 @@ const Assets = {
 
   drawGalaxyStar(scene, x, y, r, colorHex) {
     const color = this.hexToInt(colorHex);
-    const glowImg = this.drawGlow(scene, x, y, r, r * 6, color, 0.25);
+    const g = CONFIG.GALAXY_GLOW;
+    const glowImg = this.drawGlow(scene, x, y, r, r * g.normal, color, 0.25);
 
     const body = scene.add.graphics();
     body.fillStyle(color, 1);
@@ -91,11 +92,12 @@ const Assets = {
     body.fillStyle(0xffffff, 0.5);
     body.fillCircle(x - r * 0.25, y - r * 0.25, r * 0.4);
 
-    return { body, glow: { img: glowImg, color }, color };
+    return { body, glow: { img: glowImg, color, r }, color };
   },
 
   setGalaxyStarGlow(scene, glow, x, y, r, hovered) {
-    this._setGlow(scene, glow, x, y, r, r * 6, r * 8, 0.25, 0.4, hovered);
+    const g = CONFIG.GALAXY_GLOW;
+    this._setGlow(scene, glow, x, y, r, r * g.normal, r * g.hover, 0.25, 0.4, hovered);
   },
 
   // ── System View ──────────────────────────────────────────
@@ -103,7 +105,8 @@ const Assets = {
   drawSystemStar(scene, cx, cy, colorHex, r) {
     const color = this.hexToInt(colorHex);
     r = r || 24;
-    const glowImg = this.drawGlow(scene, cx, cy, r, r * 8, color, 0.2);
+    const g = CONFIG.SYSTEM_STAR_GLOW;
+    const glowImg = this.drawGlow(scene, cx, cy, r, r * g.normal, color, 0.2);
 
     const body = scene.add.graphics();
     body.fillStyle(color, 1);
@@ -115,7 +118,8 @@ const Assets = {
   },
 
   setSystemStarGlow(scene, glow, cx, cy, r, hovered) {
-    this._setGlow(scene, glow, cx, cy, r, r * 8, r * 10, 0.2, 0.35, hovered);
+    const g = CONFIG.SYSTEM_STAR_GLOW;
+    this._setGlow(scene, glow, cx, cy, r, r * g.normal, r * g.hover, 0.2, 0.35, hovered);
   },
 
   drawSystemPlanet(scene, x, y, r, colorHex) {
@@ -139,17 +143,19 @@ const Assets = {
 
   // ── Orbits ───────────────────────────────────────────────
 
-  /** Draw an elliptical orbit ring. Star sits at one focus. */
+  /** Draw an elliptical orbit ring with subtle glow. Star sits at one focus. */
   drawOrbit(scene, cx, cy, semiMajor, eccentricity) {
     const semiMinor = semiMajor * Math.sqrt(1 - eccentricity * eccentricity);
     const focusOffset = semiMajor * eccentricity;
+    const ellipse = new Phaser.Geom.Ellipse(cx + focusOffset, cy, semiMajor * 2, semiMinor * 2);
 
     const ring = scene.add.graphics();
-    ring.lineStyle(1, CONFIG.COLORS.orbit_ring, 0.4);
-    ring.strokeEllipseShape(
-      new Phaser.Geom.Ellipse(cx + focusOffset, cy, semiMajor * 2, semiMinor * 2),
-      64
-    );
+    // Outer glow pass — wide, soft
+    ring.lineStyle(4, 0x1a3a5a, 0.04);
+    ring.strokeEllipseShape(ellipse, 64);
+    // Core line
+    ring.lineStyle(1, 0x2a4a6a, 0.45);
+    ring.strokeEllipseShape(ellipse, 64);
     return ring;
   },
 
@@ -218,13 +224,63 @@ const Assets = {
 
   // ── Background ───────────────────────────────────────────
 
-  /** Scatter tiny dots for a starfield backdrop. */
-  drawStarfield(scene, count, w, h) {
-    const g = scene.add.graphics();
-    for (let i = 0; i < count; i++) {
-      g.fillStyle(0xffffff, 0.08 + Math.random() * 0.25);
-      g.fillCircle(Math.random() * w, Math.random() * h, 0.5 + Math.random() * 0.8);
+  /**
+   * Parallax starfield from preloaded PNG tiles.
+   * All layers scroll 1:1 with camera. Parallax is created by
+   * offsetting tilePosition in updateStarfield().
+   * Returns array of tileSprites for camera tagging.
+   */
+  drawStarfield(scene, w, h) {
+    const layers = CONFIG.STARFIELD_LAYERS;
+    scene._starfieldSprites = [];
+    const sprites = [];
+
+    for (let i = 0; i < layers.length; i++) {
+      const def = layers[i];
+      const ts = scene.add.tileSprite(w / 2, h / 2, w, h, def.key);
+      ts.setDepth(-layers.length + i);
+      sprites.push(ts);
+      scene._starfieldSprites.push({ sprite: ts, config: def });
     }
-    return g;
+
+    return sprites;
+  },
+
+  /**
+   * Update starfield: parallax via tilePosition offset, fade via zoom level.
+   *
+   * Parallax: each layer's scroll config (0-1) controls how much the tile
+   * pattern drifts relative to the camera. scroll=1.0 means no drift (locked
+   * to world), lower values drift less (appear farther away).
+   *
+   * Fade: vis_min/full_vis_min/full_vis_max/vis_max control alpha by zoom.
+   */
+  updateStarfield(scene) {
+    if (!scene._starfieldSprites) return;
+    const cam = scene.cameras.main;
+    const zoom = cam.zoom;
+
+    for (const layer of scene._starfieldSprites) {
+      const { vis_min, full_vis_min, full_vis_max, vis_max, scroll } = layer.config;
+
+      // Parallax: offset tile pattern. drift=0 at scroll=1.0, increases as scroll decreases
+      const drift = 1 - scroll;
+      layer.sprite.tilePositionX = -cam.scrollX * drift;
+      layer.sprite.tilePositionY = -cam.scrollY * drift;
+
+      // Fade based on zoom
+      let alpha;
+      if (zoom <= vis_min || zoom >= vis_max) {
+        alpha = 0;
+      } else if (zoom < full_vis_min) {
+        alpha = (zoom - vis_min) / (full_vis_min - vis_min);
+      } else if (zoom <= full_vis_max) {
+        alpha = 1;
+      } else {
+        alpha = 1 - (zoom - full_vis_max) / (vis_max - full_vis_max);
+      }
+
+      layer.sprite.setAlpha(Phaser.Math.Clamp(alpha, 0, 1));
+    }
   },
 };

@@ -212,6 +212,7 @@ async def websocket_endpoint(ws: WebSocket, user_id: int):
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 CLIENT_DIR = os.path.normpath(os.path.join(_THIS_DIR, "..", "client"))
 CLIENT_JS = os.path.join(CLIENT_DIR, "js")
+CLIENT_ASSETS = os.path.join(CLIENT_DIR, "assets")
 print(f"[static] Client: {CLIENT_DIR}")
 
 @app.get("/")
@@ -219,3 +220,4 @@ async def serve_index():
     return FileResponse(os.path.join(CLIENT_DIR, "index.html"))
 
 app.mount("/js", StaticFiles(directory=CLIENT_JS, follow_symlink=True), name="js")
+app.mount("/assets", StaticFiles(directory=CLIENT_ASSETS, follow_symlink=True), name="assets")

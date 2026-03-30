@@ -18,7 +18,7 @@ class DetailsScene extends Phaser.Scene {
   create() {
     this.cameras.main.setBackgroundColor('#050a12');
     const W = this.cameras.main.width, H = this.cameras.main.height;
-    Assets.drawStarfield(this, 120, W, H);
+    Assets.drawStarfield(this, W, H);
 
     this.loadingText = this.add.text(W / 2, H / 2, 'Loading...', {
       fontFamily: CONFIG.FONT, fontSize: '14px', color: CONFIG.COLORS.hud_hint,
