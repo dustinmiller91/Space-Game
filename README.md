@@ -1,4 +1,4 @@
-# Star Strategy
+# Ships In The Night
 
 A browser-based multiplayer idle space strategy game.
 
@@ -60,24 +60,10 @@ pip install -r requirements.txt
 
 ### 3. Initialize the Universe
 
-This creates all tables and populates 100 star systems with stars and planets:
+This creates all tables and populates star systems with stars, planets, moons, and rings:
 
 ```bash
 python universe_generation.py
-```
-
-You should see output like:
-```
-═══════════════════════════════════════
-  Star Strategy — Universe Generation
-═══════════════════════════════════════
-Galaxy seed: 42
-Generating 100 systems...
-  → ~110 stars
-  → ~500 planets
-[✓] Schema created
-[✓] Inserted 100 systems, 110 stars, 502 planets
-[✓] Universe initialized successfully!
 ```
 
 ### 4. Start the Game Server
@@ -91,8 +77,8 @@ uvicorn server:app --host 0.0.0.0 --port 8000 --reload
 Open http://localhost:8000
 
 - **Galaxy view**: Pan with mouse at screen edges, hover stars for tooltips, click to enter a system
-- **System view**: See the star and orbiting planets, click a planet for details
-- **Details view**: Planet attributes, resource rates, and system stockpile (accumulates every 3s tick)
+- **System view**: See the star, orbiting planets, moons, and rings; click any body for details
+- **Details view**: Body attributes, resource rates, and system stockpile (accumulates every 3s tick)
 
 ## Architecture
 
@@ -102,7 +88,7 @@ Browser (Phaser 3)                    Server (FastAPI)
 │  GalaxyScene       │──GET /api/──→  │  REST endpoints        │
 │  SystemScene       │    galaxy      │    /api/galaxy          │
 │  DetailsScene      │    system/:id  │    /api/system/:id      │
-│                    │    planet/:id  │    /api/planet/:id      │
+│                    │    body/:id    │    /api/body/:id        │
 │  Network.ws ◄──────┼──WebSocket──→  │  WebSocket handler      │
 │                    │                │                          │
 │  Assets (render)   │                │  Tick loop (3s)          │
@@ -110,7 +96,7 @@ Browser (Phaser 3)                    Server (FastAPI)
 └────────────────────┘                │                          │
                                       │  PostgreSQL              │
                                       │    players, systems,     │
-                                      │    stars, planets,       │
+                                      │    bodies,               │
                                       │    system_resources      │
                                       └────────────────────────┘
 ```

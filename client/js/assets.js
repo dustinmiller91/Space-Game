@@ -248,12 +248,6 @@ const Assets = {
 
   /**
    * Update starfield: parallax via tilePosition offset, fade via zoom level.
-   *
-   * Parallax: each layer's scroll config (0-1) controls how much the tile
-   * pattern drifts relative to the camera. scroll=1.0 means no drift (locked
-   * to world), lower values drift less (appear farther away).
-   *
-   * Fade: vis_min/full_vis_min/full_vis_max/vis_max control alpha by zoom.
    */
   updateStarfield(scene) {
     if (!scene._starfieldSprites) return;
@@ -263,7 +257,7 @@ const Assets = {
     for (const layer of scene._starfieldSprites) {
       const { vis_min, full_vis_min, full_vis_max, vis_max, scroll } = layer.config;
 
-      // Parallax: offset tile pattern. drift=0 at scroll=1.0, increases as scroll decreases
+      // Parallax: offset tile pattern
       const drift = 1 - scroll;
       layer.sprite.tilePositionX = -cam.scrollX * drift;
       layer.sprite.tilePositionY = -cam.scrollY * drift;

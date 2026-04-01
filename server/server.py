@@ -1,5 +1,5 @@
 """
-server.py — Hollow Firmament game server.
+server.py — Ships In The Night game server.
 
 Serves client files, runs the game tick loop, and provides
 REST + WebSocket APIs. All data comes from the unified 'bodies' table.
@@ -111,7 +111,6 @@ async def get_galaxy_data(pool: asyncpg.Pool):
     result = []
     for r in rows:
         d = dict(r)
-        # Parse JSON companions (asyncpg returns as string)
         import json as _json
         if d["companions"] and isinstance(d["companions"], str):
             d["companions"] = _json.loads(d["companions"])

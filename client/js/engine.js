@@ -27,4 +27,4 @@ const game = new Phaser.Game(gameConfig);
 // Connect WebSocket (for future real-time updates)
 Network.connect(1);
 
-console.log('[engine] Hollow Firmament started');
+console.log('[engine] Ships In The Night started');

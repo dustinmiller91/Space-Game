@@ -139,23 +139,7 @@ const UI = {
   },
 
   // ── Camera System ─────────────────────────────────────────
-  //
-  // Spring-driven chase camera. All smoothness comes from critically
-  // damped springs — inputs only modify the target state, never the
-  // camera directly.
-  //
-  // State:  targetZoom, targetScrollX, targetScrollY
-  // Each frame: advance three springs toward targets, done.
-  //
-  // Public API:
-  //   setupCamera(scene, opts)  — call in create(), after initCameras
-  //   updateCamera(scene)       — call in update()
-  //   centerCameraOn(scene, wx, wy) — set scroll target to world point
 
-  /**
-   * Critically damped spring. Approaches target without oscillation.
-   * Returns { value, velocity }.
-   */
   _springDamp(current, target, velocity, omega, dt) {
     const diff = current - target;
     const exp = Math.exp(-omega * dt);
@@ -164,18 +148,9 @@ const UI = {
     return { value: newVal, velocity: newVel };
   },
 
-  /**
-   * Clamp a scroll value so the viewport stays within world bounds.
-   * When viewport exceeds world, centers on that axis.
-   *
-   * Phaser's scrollX/Y with default 0.5 origin means the visible
-   * left edge of the viewport is at: scrollX + camSize/2 - camSize/(2*zoom)
-   * i.e. scrollX = leftEdge - camSize/2 + camSize/(2*zoom)
-   */
   _clampScroll(scroll, camSize, zoom, worldSize) {
     const vw = camSize / zoom;
     if (vw >= worldSize) {
-      // Viewport exceeds world — center
       return worldSize / 2 - camSize / 2;
     }
     const min = vw / 2 - camSize / 2;
@@ -183,31 +158,23 @@ const UI = {
     return Phaser.Math.Clamp(scroll, min, Math.max(min, max));
   },
 
-  /**
-   * Initialize the camera system. Call once in create(), after initCameras().
-   * opts: { zoom, centerX, centerY }
-   */
   setupCamera(scene, opts = {}) {
     const cam = scene.cameras.main;
     const startZoom = opts.zoom || 1;
 
-    // Target state — inputs modify these, springs chase them
     scene._cam = {
       targetZoom: startZoom,
       targetScrollX: 0,
       targetScrollY: 0,
-      // Spring velocities
       velZoom: 0,
       velScrollX: 0,
       velScrollY: 0,
-      // Edge pan intensity (-1 to 1 per axis)
       edgePanX: 0,
       edgePanY: 0,
     };
 
     cam.setZoom(startZoom);
 
-    // Set initial scroll position
     if (opts.centerX !== undefined && opts.centerY !== undefined) {
       const worldW = scene._worldW || CONFIG.WORLD_W;
       const worldH = scene._worldH || CONFIG.WORLD_H;
@@ -219,7 +186,6 @@ const UI = {
       cam.scrollY = scene._cam.targetScrollY;
     }
 
-    // ── Edge pan: track pointer proximity to screen edges ──
     scene.input.on('pointermove', (ptr) => {
       const c = scene._cam;
       const w = cam.width, h = cam.height;
@@ -235,7 +201,6 @@ const UI = {
       else if (ptr.y > h - ez) c.edgePanY = (ptr.y - (h - ez)) / ez;
     });
 
-    // ── Zoom: proportional step, recompute scroll target ──
     scene.input.on('wheel', (ptr, go, dx, dy) => {
       const c = scene._cam;
       const zoomMin = scene._zoomMin || CONFIG.ZOOM_MIN;
@@ -251,24 +216,17 @@ const UI = {
         const worldH = scene._worldH || CONFIG.WORLD_H;
         const hw = cam.width * 0.5, hh = cam.height * 0.5;
 
-        // World point under pointer at current camera state
         const wp = cam.getWorldPoint(ptr.x, ptr.y);
 
-        // Scroll position that keeps this world point under the pointer
-        // at the TARGET zoom level
         const rawX = wp.x - (ptr.x - hw) / c.targetZoom - hw;
         const rawY = wp.y - (ptr.y - hh) / c.targetZoom - hh;
 
-        // Clamp to world bounds at the target zoom
         c.targetScrollX = this._clampScroll(rawX, cam.width, c.targetZoom, worldW);
         c.targetScrollY = this._clampScroll(rawY, cam.height, c.targetZoom, worldH);
       }
     });
   },
 
-  /**
-   * Advance the camera. Call every frame in update().
-   */
   updateCamera(scene) {
     if (!scene._cam) return;
     const cam = scene.cameras.main;
@@ -278,18 +236,15 @@ const UI = {
     const omega = CONFIG.CAM_SPRING_OMEGA;
     const dt = 1 / 60;
 
-    // ── Edge panning: add to scroll target each frame ──
     if (c.edgePanX || c.edgePanY) {
       const speed = CONFIG.SCROLL_SPEED / c.targetZoom;
       c.targetScrollX += c.edgePanX * speed;
       c.targetScrollY += c.edgePanY * speed;
     }
 
-    // ── Clamp scroll target to world bounds at target zoom ──
     c.targetScrollX = this._clampScroll(c.targetScrollX, cam.width, c.targetZoom, worldW);
     c.targetScrollY = this._clampScroll(c.targetScrollY, cam.height, c.targetZoom, worldH);
 
-    // ── Advance springs ──
     const z = this._springDamp(cam.zoom, c.targetZoom, c.velZoom, omega, dt);
     const sx = this._springDamp(cam.scrollX, c.targetScrollX, c.velScrollX, omega, dt);
     const sy = this._springDamp(cam.scrollY, c.targetScrollY, c.velScrollY, omega, dt);
@@ -301,14 +256,9 @@ const UI = {
     c.velScrollX = sx.velocity;
     c.velScrollY = sy.velocity;
 
-    // Keep UI camera sized to viewport
     if (scene._uiCam) scene._uiCam.setSize(cam.width, cam.height);
   },
 
-  /**
-   * Set the camera target to center on a world coordinate.
-   * The spring will animate there smoothly.
-   */
   centerCameraOn(scene, wx, wy) {
     if (scene._cam) {
       const cam = scene.cameras.main;
@@ -319,11 +269,9 @@ const UI = {
       const rawY = wy - cam.height * 0.5;
       scene._cam.targetScrollX = this._clampScroll(rawX, cam.width, zoom, worldW);
       scene._cam.targetScrollY = this._clampScroll(rawY, cam.height, zoom, worldH);
-      // Also set current position for instant centering on scene start
       cam.scrollX = scene._cam.targetScrollX;
       cam.scrollY = scene._cam.targetScrollY;
     } else {
-      // Fallback for scenes without camera system (DetailsScene)
       const cam = scene.cameras.main;
       cam.scrollX = wx - cam.width * 0.5;
       cam.scrollY = wy - cam.height * 0.5;
