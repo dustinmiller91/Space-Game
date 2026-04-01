@@ -1,5 +1,5 @@
 -- ============================================================
--- Hollow Firmament — Database Schema
+-- Ships In The Night — Database Schema
 -- ============================================================
 --
 -- MOBILE DIAGRAM: Every object in a system is a "body" in a tree.
@@ -10,12 +10,19 @@
 --          │    └─ Planet (orbits secondary)
 --          │         └─ Moon (orbits planet)
 --          ├─ Planet (orbits primary)
+--          │    ├─ Ring (Roche limit zone)
+--          │    ├─ Ring
 --          │    ├─ Moon
 --          │    └─ Moon
 --          └─ Planet
 --
--- body_type: 'star', 'planet', 'moon'
+-- body_type: 'star', 'planet', 'moon', 'ring'
 -- Orbital params are NULL for root bodies (they don't orbit anything).
+--
+-- All masses are in solar masses (M☉).
+-- semi_major is in AU.
+-- orbital_period is in years.
+-- orbital_velocity is in AU/year.
 
 DROP TABLE IF EXISTS system_resources CASCADE;
 DROP TABLE IF EXISTS bodies CASCADE;
@@ -40,16 +47,18 @@ CREATE TABLE bodies (
     id              SERIAL PRIMARY KEY,
     system_id       INTEGER NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
     parent_id       INTEGER REFERENCES bodies(id) ON DELETE CASCADE,
-    body_type       VARCHAR(10) NOT NULL CHECK (body_type IN ('star', 'planet', 'moon')),
+    body_type       VARCHAR(10) NOT NULL CHECK (body_type IN ('star', 'planet', 'moon', 'ring')),
     name            VARCHAR(100) NOT NULL,
 
     -- Orbit (NULL for root body)
-    semi_major      DOUBLE PRECISION,
+    semi_major      DOUBLE PRECISION,       -- AU
     eccentricity    DOUBLE PRECISION DEFAULT 0,
     orbit_angle     DOUBLE PRECISION DEFAULT 0,
+    orbital_period  DOUBLE PRECISION,       -- years (Kepler's third law)
+    orbital_velocity DOUBLE PRECISION,      -- AU/year
 
     -- Physical
-    mass            DOUBLE PRECISION NOT NULL DEFAULT 0,
+    mass            DOUBLE PRECISION NOT NULL DEFAULT 0,  -- solar masses
     radius          DOUBLE PRECISION NOT NULL,
     color_hex       VARCHAR(7) NOT NULL,
     seed            INTEGER NOT NULL,

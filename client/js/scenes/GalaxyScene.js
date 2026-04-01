@@ -56,7 +56,6 @@ class GalaxyScene extends Phaser.Scene {
       const cx = sys.galaxy_x, cy = sys.galaxy_y;
 
       // ── Draw stars as a cluster ──────────────────────────
-      // Seeded RNG per system so layout is unique but deterministic
       const rng = Assets.seededRandom(sys.seed);
       const allGlows = [];
 
@@ -65,23 +64,18 @@ class GalaxyScene extends Phaser.Scene {
       W(body); W(glow.img);
       allGlows.push(glow);
 
-      // Companions: each gets a seeded angle, distance, and size
-      // For 1 companion: simple pair at a random angle
-      // For 2+: first orbits close, rest spread at varied distances
-      // This loosely mirrors the mobile tree (primary → companions)
+      // Companions
       const companions = sys.companions || [];
-      const baseAngle = rng() * Math.PI * 2;  // random orientation per system
+      const baseAngle = rng() * Math.PI * 2;
 
       for (let i = 0; i < companions.length; i++) {
         const comp = companions[i];
 
-        // Each companion gets its own angle offset and distance jitter
         const angleSpread = companions.length === 1
-          ? 0  // binary: one companion at baseAngle
-          : (i / companions.length) * Math.PI * 2;  // spread evenly from baseAngle
+          ? 0
+          : (i / companions.length) * Math.PI * 2;
         const angle = baseAngle + angleSpread + (rng() - 0.5) * 0.6;
 
-        // Vary distance: wider spacing so stars don't overlap
         const distBase = primaryR * 3.5 + 4;
         const distJitter = 2 + rng() * primaryR * 1.2;
         const offset = distBase + distJitter + i * (primaryR * 0.8);

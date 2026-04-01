@@ -21,6 +21,24 @@ const CONFIG = {
   // System view glow
   SYSTEM_STAR_GLOW: { normal: 12, hover: 15 },  // glow outer radius as multiple of star radius
 
+  // System view orbit display (log scale)
+  //
+  // Real orbital distances span orders of magnitude (moons at 0.001 AU,
+  // outer planets at 30+ AU, companion stars at 50+ AU). Linear scaling
+  // can't show all of these at once. Log scaling compresses the range:
+  //
+  //   displayDist = ORBIT_DISPLAY_BASE * ln(1 + semi_major_AU / ORBIT_LOG_REF)
+  //
+  // ORBIT_LOG_REF: the "knee" of the curve. Orbits much smaller than this
+  //   get stretched (moons become visible); orbits much larger get compressed.
+  //   Set to roughly the smallest planet orbit (~0.2 AU) so the planet zone
+  //   gets good spread while moons and rings still resolve.
+  //
+  // ORBIT_DISPLAY_BASE: overall pixel scaling factor.
+  ORBIT_DISPLAY_BASE: 800,
+  // ORBIT_LOG_REF: 0.2,
+  ORBIT_LOG_REF: .055,
+
  
   // Camera
   EDGE_ZONE: 80,          // pixels from screen edge that trigger panning

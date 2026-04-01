@@ -144,10 +144,6 @@ class CameraTestScene extends Phaser.Scene {
       const vh = cam.height / cam.zoom;
       const worldW = this._worldW;
 
-      // Compute visible world edges
-      // Phaser scroll with default origin: center of viewport is at
-      // (scrollX + width/2, scrollY + height/2) in screen coords,
-      // which maps to world via getWorldPoint
       const topLeft = cam.getWorldPoint(0, 0);
       const botRight = cam.getWorldPoint(cam.width, cam.height);
 

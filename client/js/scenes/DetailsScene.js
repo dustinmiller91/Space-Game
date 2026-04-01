@@ -1,7 +1,7 @@
 /**
  * DetailsScene.js — Body inspection view.
  *
- * Shows any body type (star, planet, moon) with info panel on the left.
+ * Shows any body type (star, planet, moon, ring) with info panel on the left.
  * Uses the unified /api/body/:id endpoint which returns the body,
  * its parent, children, and system resources.
  */
@@ -69,6 +69,24 @@ class DetailsScene extends Phaser.Scene {
       const sysRows = [{ label: 'Planets', value: `${planets}` }];
       if (companions) sysRows.push({ label: 'Companions', value: `${companions}` });
       sections.push({ title: 'SYSTEM INFO', rows: sysRows });
+
+    } else if (body.body_type === 'ring') {
+      sections.push({
+        title: 'RING CLASSIFICATION', rows: [
+          { label: 'Type',   value: body.planet_type || 'Unknown' },
+          { label: 'Width',  value: `${body.radius} units` },
+          ...(body.semi_major ? [{ label: 'Orbit', value: `${body.semi_major} AU` }] : []),
+        ]
+      });
+      if (body.minerals_rate || body.biomass_rate || body.gas_rate || body.energy_rate) {
+        sections.push({ title: 'RESOURCE RATES', rows: [
+          { label: 'Minerals', value: `${body.minerals_rate}/tick`, color: CONFIG.COLORS.res_minerals },
+          { label: 'Biomass',  value: `${body.biomass_rate}/tick`,  color: CONFIG.COLORS.res_biomass },
+          { label: 'Gas',      value: `${body.gas_rate}/tick`,      color: CONFIG.COLORS.res_gas },
+          { label: 'Energy',   value: `${body.energy_rate}/tick`,   color: CONFIG.COLORS.res_energy },
+        ]});
+      }
+
     } else {
       sections.push({
         title: body.body_type === 'moon' ? 'MOON CLASSIFICATION' : 'CLASSIFICATION',
@@ -92,7 +110,13 @@ class DetailsScene extends Phaser.Scene {
           { label: 'Energy',   value: `${body.energy_rate}/tick`,   color: CONFIG.COLORS.res_energy },
         ]});
       }
-      // Show moons if this is a planet
+      // Show rings and moons if this is a planet
+      const rings = children.filter(c => c.body_type === 'ring');
+      if (rings.length > 0) {
+        sections.push({ title: 'RINGS', rows: rings.map(r => ({
+          label: r.name, value: r.planet_type,
+        }))});
+      }
       const moons = children.filter(c => c.body_type === 'moon');
       if (moons.length > 0) {
         sections.push({ title: 'MOONS', rows: moons.map(m => ({
@@ -115,13 +139,55 @@ class DetailsScene extends Phaser.Scene {
     if (body.body_type === 'star') {
       Assets.drawDetailStar(this, cx, cy, 80, body.color_hex, body.seed);
       this._label(cx, cy + 110, `${body.spectral_class}-type Star`);
+
+    } else if (body.body_type === 'ring') {
+      // Use parent seed for tilt (same algorithm as SystemScene._planetTilt)
+      const tilt = parent ? this._planetTilt(parent.seed) : 0.05;
+      this._drawDetailRing(cx, cy, 80, body, tilt);
+      this._label(cx, cy + 110, body.planet_type || 'Ring');
+
     } else {
       const r = Math.max(40, body.radius * (body.body_type === 'moon' ? 8 : 5));
       Assets.drawDetailPlanet(this, cx, cy, r, body.color_hex, body.seed);
       this._label(cx, cy + r + 30, body.planet_type || body.body_type);
     }
-    this._label(cx, cy + (body.body_type === 'star' ? 130 : Math.max(40, body.radius * 5) + 50),
+    this._label(cx, cy + (body.body_type === 'star' || body.body_type === 'ring'
+      ? 130 : Math.max(40, body.radius * 5) + 50),
       `"${body.name}"`, CONFIG.COLORS.hud_hint);
+  }
+
+  /** Same tilt algorithm as SystemScene — must stay in sync. */
+  _planetTilt(seed) {
+    const rng = Assets.seededRandom(seed);
+    const raw = rng();
+    return raw * raw * 0.35;
+  }
+
+  _drawDetailRing(cx, cy, size, body, tilt) {
+    const rng = Assets.seededRandom(body.seed);
+    const color = Assets.hexToInt(body.color_hex);
+    const g = this.add.graphics();
+    const cosI = 1.0 - tilt;
+
+    const strokes = 8 + Math.floor(rng() * 6);
+    for (let i = 0; i < strokes; i++) {
+      const t = i / strokes;
+      const r = (size * 0.5) + t * (size * 0.5);
+      const alpha = 0.2 + rng() * 0.25;
+
+      const bright = 0.6 + rng() * 0.8;
+      const c = Phaser.Display.Color.IntegerToColor(color);
+      const tinted = Phaser.Display.Color.GetColor(
+        Math.min(255, Math.floor(c.red * bright)),
+        Math.min(255, Math.floor(c.green * bright)),
+        Math.min(255, Math.floor(c.blue * bright)),
+      );
+
+      // Projected circle: semi-major = r, semi-minor = r * cosI
+      const ellipse = new Phaser.Geom.Ellipse(cx, cy, r * 2, r * cosI * 2);
+      g.lineStyle(2 + rng() * 2, tinted, alpha);
+      g.strokeEllipseShape(ellipse, 64);
+    }
   }
 
   _stockpile(res) {

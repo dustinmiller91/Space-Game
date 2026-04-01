@@ -2,7 +2,7 @@
 """
 generate_starfield.py — Generate tiled starfield background PNGs.
 
-Produces layered starfield tiles for the Hollow Firmament client.
+Produces layered starfield tiles for the Ships In The Night client.
 Each layer has different dot sizes/densities for parallax depth.
 Run once (or whenever you want to tweak the look), outputs to client/assets/.
 
@@ -36,19 +36,6 @@ STAR_COLORS = [
 ]
 
 # ── Layer Configurations ────────────────────────────────────
-# Each layer becomes one PNG file.
-#
-#   name:          filename (without .png)
-#   size:          tile dimensions in pixels (square)
-#   count:         number of dots to draw
-#   radius_min:    smallest dot radius in pixels
-#   radius_max:    largest dot radius in pixels
-#   alpha_min:     minimum dot opacity (0-255) — applied to the smallest dots
-#   alpha_max:     maximum dot opacity (0-255) — applied to the largest dots
-#   seed_offset:   added to SEED for per-layer variation
-#   glow:          enable halo/glow effect on dots (True/False)
-#   glow_scale:    glow radius as a multiple of dot radius (e.g. 4.0 = glow extends 4x the dot size)
-#   glow_alpha:    peak opacity of the glow (0.0-1.0, relative to the dot's alpha)
 
 LAYER_CONFIGS = [
     {
